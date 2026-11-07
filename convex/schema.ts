@@ -11,6 +11,8 @@ export default defineSchema({
     withFamily: v.boolean(),
     fromName: v.string(),
     note: v.optional(v.string()),
+    messageIdx: v.optional(v.number()), // which preset message (0-2)
+    customMessage: v.optional(v.string()), // replaces the preset when set
     createdAt: v.number(),
     // tracking summary (updated on every event)
     openCount: v.number(), // page loads by real browsers
@@ -22,6 +24,14 @@ export default defineSchema({
   })
     .index("by_slug", ["slug"])
     .index("by_createdAt", ["createdAt"]),
+
+  // the sender's own saved messages, reusable for anyone
+  templates: defineTable({
+    title: v.string(),
+    text: v.string(),
+    lang: v.string(),
+    createdAt: v.number(),
+  }).index("by_createdAt", ["createdAt"]),
 
   events: defineTable({
     recipientId: v.id("recipients"),

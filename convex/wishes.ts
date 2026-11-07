@@ -39,20 +39,30 @@ const recipientInput = {
   withFamily: v.boolean(),
   fromName: v.string(),
   note: v.optional(v.string()),
+  messageIdx: v.optional(v.number()),
+  customMessage: v.optional(v.string()),
 };
 
-async function insertRecipient(
-  ctx: MutationCtx,
-  a: {
-    name: string;
-    phone?: string;
-    festival: string;
-    lang: string;
-    withFamily: boolean;
-    fromName: string;
-    note?: string;
-  },
-) {
+type RecipientFields = {
+  name: string;
+  phone?: string;
+  festival: string;
+  lang: string;
+  withFamily: boolean;
+  fromName: string;
+  note?: string;
+  messageIdx?: number;
+  customMessage?: string;
+};
+
+// "{name}" in a custom message becomes the recipient's name
+function cleanMessage(text: string | undefined, name: string) {
+  const t = text?.trim();
+  if (!t) return undefined;
+  return t.slice(0, 600).split("{name}").join(name);
+}
+
+async function insertRecipient(ctx: MutationCtx, a: RecipientFields) {
   const name = a.name.trim();
   if (!name) throw new Error("Name is required");
   if (name.length > 80) throw new Error("Name is too long");
@@ -68,6 +78,8 @@ async function insertRecipient(
     withFamily: a.withFamily,
     fromName: a.fromName.trim().slice(0, 60),
     note: a.note?.trim().slice(0, 300) || undefined,
+    messageIdx: a.customMessage?.trim() ? undefined : Math.max(0, Math.min(2, a.messageIdx ?? 0)),
+    customMessage: cleanMessage(a.customMessage, name),
     createdAt: Date.now(),
     openCount: 0,
     replyCount: 0,
@@ -93,6 +105,8 @@ export const createBulk = mutation({
     withFamily: v.boolean(),
     fromName: v.string(),
     note: v.optional(v.string()),
+    messageIdx: v.optional(v.number()),
+    customMessage: v.optional(v.string()),
   },
   handler: async (ctx, { adminKey, people, ...rest }) => {
     assertAdmin(adminKey);
@@ -104,6 +118,62 @@ export const createBulk = mutation({
       created++;
     }
     return created;
+  },
+});
+
+export const update = mutation({
+  args: { adminKey: v.string(), id: v.id("recipients"), ...recipientInput },
+  handler: async (ctx, { adminKey, id, ...a }) => {
+    assertAdmin(adminKey);
+    const name = a.name.trim();
+    if (!name) throw new Error("Name is required");
+    if (!FESTIVALS.includes(a.festival)) throw new Error("Unknown festival");
+    if (!LANGS.includes(a.lang)) throw new Error("Unknown language");
+    const custom = cleanMessage(a.customMessage, name);
+    // undefined removes the field
+    await ctx.db.patch(id, {
+      name,
+      phone: a.phone?.replace(/[^\d+]/g, "") || undefined,
+      festival: a.festival,
+      lang: a.lang,
+      withFamily: a.withFamily,
+      fromName: a.fromName.trim().slice(0, 60),
+      note: a.note?.trim().slice(0, 300) || undefined,
+      messageIdx: custom ? undefined : Math.max(0, Math.min(2, a.messageIdx ?? 0)),
+      customMessage: custom,
+    });
+  },
+});
+
+// ---------- saved message library ----------
+export const templatesList = query({
+  args: { adminKey: v.string() },
+  handler: async (ctx, { adminKey }) => {
+    assertAdmin(adminKey);
+    return await ctx.db.query("templates").withIndex("by_createdAt").order("desc").take(100);
+  },
+});
+
+export const templateCreate = mutation({
+  args: { adminKey: v.string(), title: v.string(), text: v.string(), lang: v.string() },
+  handler: async (ctx, { adminKey, title, text, lang }) => {
+    assertAdmin(adminKey);
+    if (!text.trim()) throw new Error("Message is empty");
+    if (!LANGS.includes(lang)) throw new Error("Unknown language");
+    await ctx.db.insert("templates", {
+      title: title.trim().slice(0, 40) || text.trim().slice(0, 30),
+      text: text.trim().slice(0, 600),
+      lang,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const templateRemove = mutation({
+  args: { adminKey: v.string(), id: v.id("templates") },
+  handler: async (ctx, { adminKey, id }) => {
+    assertAdmin(adminKey);
+    await ctx.db.delete(id);
   },
 });
 
@@ -158,6 +228,8 @@ export const getBySlug = query({
       withFamily: r.withFamily,
       fromName: r.fromName,
       note: r.note ?? null,
+      messageIdx: r.messageIdx ?? 0,
+      customMessage: r.customMessage ?? null,
     };
   },
 });

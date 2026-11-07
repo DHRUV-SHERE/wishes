@@ -43,6 +43,35 @@ body {
 }
 .glow-pulse { animation: pulseGlow 2.4s ease-in-out infinite; }
 
+/* Animatable colour variables: the card palette cross-fades smoothly */
+@property --c1 { syntax: "<color>"; inherits: true; initial-value: #6b1d3a; }
+@property --c2 { syntax: "<color>"; inherits: true; initial-value: #2a0f2e; }
+@property --c3 { syntax: "<color>"; inherits: true; initial-value: #120716; }
+@property --ac { syntax: "<color>"; inherits: true; initial-value: #ffc44d; }
+@property --ac2 { syntax: "<color>"; inherits: true; initial-value: #ff8a3d; }
+
+.card-stage {
+  background: radial-gradient(ellipse at 50% 0%, var(--c1) 0%, var(--c2) 45%, var(--c3) 100%);
+  transition: --c1 3s ease, --c2 3s ease, --c3 3s ease, --ac 3s ease, --ac2 3s ease;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.mandala-a { animation: spin 90s linear infinite; transform-origin: center; }
+.mandala-b { animation: spin 140s linear infinite reverse; transform-origin: center; }
+
+@keyframes sway {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+.sway { transform-origin: 50% 0; animation: sway 4.5s ease-in-out infinite; }
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.15; transform: scale(0.7); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+.twinkle { position: absolute; animation: twinkle 3s ease-in-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
-  .flame, .spark, .glow-pulse { animation: none; }
+  .flame, .spark, .glow-pulse, .mandala-a, .mandala-b, .sway, .twinkle { animation: none; }
+  .card-stage { transition: none; }
 }

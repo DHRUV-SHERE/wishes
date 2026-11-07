@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchQuery } from "convex/nextjs";
 import { api } from "../../../../convex/_generated/api";
-import { FESTIVALS, Festival, Lang, TEXT, UI } from "@/lib/content";
+import { FESTIVALS, Festival, Lang, TEXT, UI, resolveMessage } from "@/lib/content";
 import WishCard from "./WishCard";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `${emoji} ${TEXT[festival][lang].title} — ${UI[lang].to(data.name, data.withFamily)}`;
   return {
     title,
-    description: TEXT[festival][lang].message,
+    description: resolveMessage(festival, lang, data.messageIdx, data.customMessage),
     robots: { index: false, follow: false },
     openGraph: { title, description: UI[lang].teaser },
   };
