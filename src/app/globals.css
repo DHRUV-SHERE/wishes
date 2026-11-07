@@ -1,26 +1,48 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fbf7f0;
+  --foreground: #2a1f1a;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-poppins), var(--font-devanagari), var(--font-gujarati), system-ui, sans-serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-poppins), "Noto Sans Devanagari", "Noto Sans Gujarati", system-ui, sans-serif;
+}
+
+/* Card typography per language */
+.font-card-en { font-family: var(--font-playfair), serif; }
+.font-card-hi { font-family: var(--font-devanagari), serif; }
+.font-card-gu { font-family: var(--font-gujarati), serif; }
+
+@keyframes flicker {
+  0%, 100% { transform: scale(1) rotate(-1deg); opacity: 1; }
+  25% { transform: scale(1.06, 1.12) rotate(1.5deg); opacity: 0.92; }
+  50% { transform: scale(0.96, 1.04) rotate(-1.5deg); opacity: 1; }
+  75% { transform: scale(1.04, 1.1) rotate(1deg); opacity: 0.95; }
+}
+.flame { transform-origin: 50% 90%; animation: flicker 1.4s ease-in-out infinite; }
+
+@keyframes floatUp {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(-110vh) scale(1.1); opacity: 0; }
+}
+.spark { position: absolute; bottom: -20px; border-radius: 9999px; animation: floatUp linear infinite; }
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 40px 6px var(--glow); }
+  50% { box-shadow: 0 0 80px 18px var(--glow); }
+}
+.glow-pulse { animation: pulseGlow 2.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flame, .spark, .glow-pulse { animation: none; }
 }
