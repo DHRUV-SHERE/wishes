@@ -1,13 +1,10 @@
 import { mutation, query, MutationCtx } from "./_generated/server";
-import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
+import { ConvexError, v } from "convex/values";
+import { requireUser } from "./lib";
 
-// ---------- admin guard ----------
-// Single-admin protection: set the passcode with `npx convex env set ADMIN_KEY <passcode>`
-function assertAdmin(adminKey: string) {
-  const expected = process.env.ADMIN_KEY;
-  if (!expected) throw new Error("ADMIN_KEY is not set on the Convex deployment");
-  if (adminKey !== expected) throw new Error("Unauthorized");
-}
+// Every dashboard function takes the signed-in user's session token and only
+// ever touches rows whose ownerId is that user.
 
 const FESTIVALS = ["diwali", "besatuvarsh", "newyear"];
 const LANGS = ["en", "hi", "gu"];
@@ -28,7 +25,7 @@ async function uniqueSlug(ctx: MutationCtx) {
       .unique();
     if (!hit) return slug;
   }
-  throw new Error("Could not generate a unique slug");
+  throw new ConvexError("Could not generate a unique slug");
 }
 
 const recipientInput = {
@@ -62,14 +59,15 @@ function cleanMessage(text: string | undefined, name: string) {
   return t.slice(0, 600).split("{name}").join(name);
 }
 
-async function insertRecipient(ctx: MutationCtx, a: RecipientFields) {
+async function insertRecipient(ctx: MutationCtx, ownerId: Id<"users">, a: RecipientFields) {
   const name = a.name.trim();
-  if (!name) throw new Error("Name is required");
-  if (name.length > 80) throw new Error("Name is too long");
-  if (!FESTIVALS.includes(a.festival)) throw new Error("Unknown festival");
-  if (!LANGS.includes(a.lang)) throw new Error("Unknown language");
+  if (!name) throw new ConvexError("Name is required");
+  if (name.length > 80) throw new ConvexError("Name is too long");
+  if (!FESTIVALS.includes(a.festival)) throw new ConvexError("Unknown festival");
+  if (!LANGS.includes(a.lang)) throw new ConvexError("Unknown language");
   const slug = await uniqueSlug(ctx);
   await ctx.db.insert("recipients", {
+    ownerId,
     name,
     slug,
     phone: a.phone?.replace(/[^\d+]/g, "") || undefined,
@@ -89,16 +87,16 @@ async function insertRecipient(ctx: MutationCtx, a: RecipientFields) {
 
 // ---------- admin API ----------
 export const create = mutation({
-  args: { adminKey: v.string(), ...recipientInput },
-  handler: async (ctx, { adminKey, ...rest }) => {
-    assertAdmin(adminKey);
-    return await insertRecipient(ctx, rest);
+  args: { token: v.string(), ...recipientInput },
+  handler: async (ctx, { token, ...rest }) => {
+    const user = await requireUser(ctx, token);
+    return await insertRecipient(ctx, user._id, rest);
   },
 });
 
 export const createBulk = mutation({
   args: {
-    adminKey: v.string(),
+    token: v.string(),
     people: v.array(v.object({ name: v.string(), phone: v.optional(v.string()) })),
     festival: v.string(),
     lang: v.string(),
@@ -108,13 +106,13 @@ export const createBulk = mutation({
     messageIdx: v.optional(v.number()),
     customMessage: v.optional(v.string()),
   },
-  handler: async (ctx, { adminKey, people, ...rest }) => {
-    assertAdmin(adminKey);
-    if (people.length > 200) throw new Error("Max 200 names at once");
+  handler: async (ctx, { token, people, ...rest }) => {
+    const user = await requireUser(ctx, token);
+    if (people.length > 200) throw new ConvexError("Max 200 names at once");
     let created = 0;
     for (const p of people) {
       if (!p.name.trim()) continue;
-      await insertRecipient(ctx, { ...rest, name: p.name, phone: p.phone });
+      await insertRecipient(ctx, user._id, { ...rest, name: p.name, phone: p.phone });
       created++;
     }
     return created;
@@ -122,13 +120,15 @@ export const createBulk = mutation({
 });
 
 export const update = mutation({
-  args: { adminKey: v.string(), id: v.id("recipients"), ...recipientInput },
-  handler: async (ctx, { adminKey, id, ...a }) => {
-    assertAdmin(adminKey);
+  args: { token: v.string(), id: v.id("recipients"), ...recipientInput },
+  handler: async (ctx, { token, id, ...a }) => {
+    const user = await requireUser(ctx, token);
+    const existing = await ctx.db.get(id);
+    if (!existing || existing.ownerId !== user._id) throw new ConvexError("Not found");
     const name = a.name.trim();
-    if (!name) throw new Error("Name is required");
-    if (!FESTIVALS.includes(a.festival)) throw new Error("Unknown festival");
-    if (!LANGS.includes(a.lang)) throw new Error("Unknown language");
+    if (!name) throw new ConvexError("Name is required");
+    if (!FESTIVALS.includes(a.festival)) throw new ConvexError("Unknown festival");
+    if (!LANGS.includes(a.lang)) throw new ConvexError("Unknown language");
     const custom = cleanMessage(a.customMessage, name);
     // undefined removes the field
     await ctx.db.patch(id, {
@@ -147,20 +147,25 @@ export const update = mutation({
 
 // ---------- saved message library ----------
 export const templatesList = query({
-  args: { adminKey: v.string() },
-  handler: async (ctx, { adminKey }) => {
-    assertAdmin(adminKey);
-    return await ctx.db.query("templates").withIndex("by_createdAt").order("desc").take(100);
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    const user = await requireUser(ctx, token);
+    return await ctx.db
+      .query("templates")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .order("desc")
+      .take(100);
   },
 });
 
 export const templateCreate = mutation({
-  args: { adminKey: v.string(), title: v.string(), text: v.string(), lang: v.string() },
-  handler: async (ctx, { adminKey, title, text, lang }) => {
-    assertAdmin(adminKey);
-    if (!text.trim()) throw new Error("Message is empty");
-    if (!LANGS.includes(lang)) throw new Error("Unknown language");
+  args: { token: v.string(), title: v.string(), text: v.string(), lang: v.string() },
+  handler: async (ctx, { token, title, text, lang }) => {
+    const user = await requireUser(ctx, token);
+    if (!text.trim()) throw new ConvexError("Message is empty");
+    if (!LANGS.includes(lang)) throw new ConvexError("Unknown language");
     await ctx.db.insert("templates", {
+      ownerId: user._id,
       title: title.trim().slice(0, 40) || text.trim().slice(0, 30),
       text: text.trim().slice(0, 600),
       lang,
@@ -170,26 +175,36 @@ export const templateCreate = mutation({
 });
 
 export const templateRemove = mutation({
-  args: { adminKey: v.string(), id: v.id("templates") },
-  handler: async (ctx, { adminKey, id }) => {
-    assertAdmin(adminKey);
+  args: { token: v.string(), id: v.id("templates") },
+  handler: async (ctx, { token, id }) => {
+    const user = await requireUser(ctx, token);
+    const t = await ctx.db.get(id);
+    if (!t || t.ownerId !== user._id) throw new ConvexError("Not found");
     await ctx.db.delete(id);
   },
 });
 
 export const list = query({
-  args: { adminKey: v.string() },
-  handler: async (ctx, { adminKey }) => {
-    assertAdmin(adminKey);
-    return await ctx.db.query("recipients").withIndex("by_createdAt").order("desc").take(500);
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    const user = await requireUser(ctx, token);
+    return await ctx.db
+      .query("recipients")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .order("desc")
+      .take(500);
   },
 });
 
 export const recentEvents = query({
-  args: { adminKey: v.string() },
-  handler: async (ctx, { adminKey }) => {
-    assertAdmin(adminKey);
-    const events = await ctx.db.query("events").order("desc").take(15);
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    const user = await requireUser(ctx, token);
+    const events = await ctx.db
+      .query("events")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .order("desc")
+      .take(15);
     return await Promise.all(
       events.map(async (e) => {
         const r = await ctx.db.get(e.recipientId);
@@ -200,9 +215,11 @@ export const recentEvents = query({
 });
 
 export const remove = mutation({
-  args: { adminKey: v.string(), id: v.id("recipients") },
-  handler: async (ctx, { adminKey, id }) => {
-    assertAdmin(adminKey);
+  args: { token: v.string(), id: v.id("recipients") },
+  handler: async (ctx, { token, id }) => {
+    const user = await requireUser(ctx, token);
+    const r = await ctx.db.get(id);
+    if (!r || r.ownerId !== user._id) throw new ConvexError("Not found");
     const events = await ctx.db
       .query("events")
       .withIndex("by_recipient", (q) => q.eq("recipientId", id))
@@ -269,7 +286,7 @@ export const track = mutation({
             ? "Safari"
             : "Other";
 
-    await ctx.db.insert("events", { recipientId: r._id, type, at: now, device, browser, country });
+    await ctx.db.insert("events", { ownerId: r.ownerId, recipientId: r._id, type, at: now, device, browser, country });
 
     if (type === "opened") {
       await ctx.db.patch(r._id, {

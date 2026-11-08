@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Doc } from "../../convex/_generated/dataModel";
 import { FESTIVALS, LANGS, Festival, Lang, shareMessage } from "@/lib/content";
+import { errMsg } from "@/lib/errors";
 import MessagePicker, { Mode, Seg } from "./MessagePicker";
 
 type Filter = "all" | "waiting" | "opened" | "viewed" | "replied";
@@ -32,12 +33,12 @@ function statusOf(r: Recipient) {
 
 /* ---------- edit dialog ---------- */
 function EditDialog({
-  adminKey,
+  token,
   r,
   templates,
   onClose,
 }: {
-  adminKey: string;
+  token: string;
   r: Recipient;
   templates: Doc<"templates">[] | undefined;
   onClose: () => void;
@@ -66,7 +67,7 @@ function EditDialog({
     setBusy(true);
     try {
       await update({
-        adminKey,
+        token,
         id: r._id,
         name,
         phone: phone || undefined,
@@ -80,7 +81,7 @@ function EditDialog({
       });
       onClose();
     } catch (x) {
-      setErr(x instanceof Error ? x.message : "Failed");
+      setErr(errMsg(x, "Failed"));
       setBusy(false);
     }
   }
@@ -113,6 +114,7 @@ function EditDialog({
           </label>
         </div>
         <MessagePicker
+          token={token}
           festival={festival}
           lang={lang}
           name={name}
@@ -137,11 +139,78 @@ function EditDialog({
   );
 }
 
+/* ---------- change password ---------- */
+function PasswordDialog({ token, onClose }: { token: string; onClose: () => void }) {
+  const change = useMutation(api.auth.changePassword);
+  const ref = useRef<HTMLDialogElement>(null);
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    ref.current?.showModal();
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      await change({ token, oldPassword: oldPw, newPassword: newPw });
+      setDone(true);
+    } catch (x) {
+      setErr(errMsg(x, "Could not change the password"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <dialog ref={ref} onClose={onClose} className="m-auto w-[min(400px,calc(100vw-24px))] rounded-2xl p-0 backdrop:bg-black/50">
+      <form onSubmit={save} className="space-y-4 p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Change password</h2>
+          <button type="button" onClick={() => ref.current?.close()} aria-label="Close" className="cursor-pointer text-2xl leading-none text-stone-500">
+            ×
+          </button>
+        </div>
+        {done ? (
+          <>
+            <p className="text-sm text-green-800">Password changed. Other devices were signed out.</p>
+            <button type="button" onClick={() => ref.current?.close()} className="w-full cursor-pointer rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white">
+              Done
+            </button>
+          </>
+        ) : (
+          <>
+            <input type="password" autoComplete="current-password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} placeholder="Current password" aria-label="Current password" className={`${inputCls} w-full`} />
+            <input type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="New password (min 8 characters)" aria-label="New password" className={`${inputCls} w-full`} />
+            {err && <p role="alert" className="text-sm text-red-700">{err}</p>}
+            <button disabled={busy || !oldPw || newPw.length < 8} className="w-full cursor-pointer rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+              {busy ? "Saving…" : "Change password"}
+            </button>
+          </>
+        )}
+      </form>
+    </dialog>
+  );
+}
+
 /* ---------- dashboard ---------- */
-export default function Dashboard({ adminKey, onLogout }: { adminKey: string; onLogout: () => void }) {
-  const list = useQuery(api.wishes.list, { adminKey });
-  const events = useQuery(api.wishes.recentEvents, { adminKey });
-  const templates = useQuery(api.wishes.templatesList, { adminKey });
+export default function Dashboard({
+  token,
+  user,
+  onLogout,
+}: {
+  token: string;
+  user: { username: string; name: string | null };
+  onLogout: () => void;
+}) {
+  const list = useQuery(api.wishes.list, { token });
+  const events = useQuery(api.wishes.recentEvents, { token });
+  const templates = useQuery(api.wishes.templatesList, { token });
   const create = useMutation(api.wishes.create);
   const createBulk = useMutation(api.wishes.createBulk);
   const remove = useMutation(api.wishes.remove);
@@ -166,6 +235,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
   const [msg, setMsg] = useState("");
   const [last, setLast] = useState<{ link: string; text: string; phone?: string } | null>(null);
   const [editing, setEditing] = useState<Recipient | null>(null);
+  const [changingPw, setChangingPw] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -215,7 +285,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
 
   async function maybeSaveTemplate() {
     if (mode === "custom" && saveToLib && custom.trim()) {
-      await saveTemplate({ adminKey, title: "", text: custom, lang });
+      await saveTemplate({ token, title: "", text: custom, lang });
       setSaveToLib(false);
     }
   }
@@ -227,7 +297,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
     setBusy(true);
     try {
       const slug = await create({
-        adminKey,
+        token,
         name,
         phone: phone || undefined,
         festival,
@@ -244,7 +314,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
       setName("");
       setPhone("");
     } catch (err) {
-      flash(err instanceof Error ? err.message : "Failed");
+      flash(errMsg(err, "Failed"));
     } finally {
       setBusy(false);
     }
@@ -264,7 +334,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
     setBusy(true);
     try {
       const n = await createBulk({
-        adminKey,
+        token,
         people,
         festival,
         lang,
@@ -277,7 +347,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
       setBulk("");
       flash(`${n} links created ✓`, 3000);
     } catch (err) {
-      flash(err instanceof Error ? err.message : "Failed");
+      flash(errMsg(err, "Failed"));
     } finally {
       setBusy(false);
     }
@@ -330,9 +400,17 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
           <h1 className="font-card-en text-2xl font-bold sm:text-3xl">🪔 Festival Wishes</h1>
           <p className="text-sm text-stone-500">Create a personal card, share the link, watch who opens it.</p>
         </div>
-        <button onClick={onLogout} className="cursor-pointer text-sm text-stone-500 underline hover:text-stone-800">
-          Log out
-        </button>
+        <div className="flex flex-col items-end gap-0.5 text-sm text-stone-500">
+          <span className="font-medium text-stone-700">{user.name || user.username}</span>
+          <span className="flex gap-3">
+            <button onClick={() => setChangingPw(true)} className="cursor-pointer underline hover:text-stone-800">
+              Password
+            </button>
+            <button onClick={onLogout} className="cursor-pointer underline hover:text-stone-800">
+              Log out
+            </button>
+          </span>
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -388,6 +466,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
           </div>
 
           <MessagePicker
+            token={token}
             festival={festival}
             lang={lang}
             name={name}
@@ -399,7 +478,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
             saveToLib={saveToLib}
             setSaveToLib={setSaveToLib}
             templates={templates}
-            onDeleteTemplate={(id) => removeTemplate({ adminKey, id })}
+            onDeleteTemplate={(id) => removeTemplate({ token, id })}
           />
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -507,7 +586,7 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
                       <button onClick={() => setEditing(r)} className="cursor-pointer rounded-lg border border-stone-300 px-3 py-1 hover:border-orange-400">Edit</button>
                       <button
                         onClick={() => {
-                          if (confirm(`Delete ${r.name} and their link?`)) remove({ adminKey, id: r._id });
+                          if (confirm(`Delete ${r.name} and their link?`)) remove({ token, id: r._id });
                         }}
                         className="ml-auto cursor-pointer rounded-lg px-3 py-1 text-red-700 hover:bg-red-50"
                       >
@@ -543,7 +622,8 @@ export default function Dashboard({ adminKey, onLogout }: { adminKey: string; on
         </aside>
       </section>
 
-      {editing && <EditDialog key={editing._id} adminKey={adminKey} r={editing} templates={templates} onClose={() => setEditing(null)} />}
+      {changingPw && <PasswordDialog token={token} onClose={() => setChangingPw(false)} />}
+      {editing && <EditDialog key={editing._id} token={token} r={editing} templates={templates} onClose={() => setEditing(null)} />}
     </main>
   );
 }
