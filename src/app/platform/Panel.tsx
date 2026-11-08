@@ -257,25 +257,24 @@ function UserDetail({ adminKey, u, onClose }: { adminKey: string; u: UserRow; on
 
 /* ---------- unowned (pre-accounts) wishes ---------- */
 function LegacyBanner({ adminKey, count, users }: { adminKey: string; count: number; users: UserRow[] }) {
-  const assign = useMutation(api.platform.assignLegacy);
+  const assignAll = useMutation(api.platform.assignLegacy);
+  const assignSome = useMutation(api.platform.assignLinks);
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<Set<Id<"recipients">>>(new Set());
+  const list = useQuery(api.platform.legacyList, picking ? { adminKey } : "skip");
 
   if (count === 0) return null;
 
-  async function go() {
-    if (!to) return;
+  async function run(fn: () => Promise<number>) {
     setBusy(true);
     setMsg("");
     try {
-      let moved = 0;
-      for (let i = 0; i < 20; i++) {
-        const r = await assign({ adminKey, userId: to as Id<"users"> });
-        moved += r.moved;
-        if (!r.more) break;
-      }
+      const moved = await fn();
       setMsg(`Moved ${moved} links.`);
+      setPicked(new Set());
     } catch (x) {
       setMsg(errMsg(x, "Failed"));
     } finally {
@@ -283,23 +282,89 @@ function LegacyBanner({ adminKey, count, users }: { adminKey: string; count: num
     }
   }
 
+  const all = () =>
+    run(async () => {
+      let moved = 0;
+      for (let i = 0; i < 20; i++) {
+        const r = await assignAll({ adminKey, userId: to as Id<"users"> });
+        moved += r.moved;
+        if (!r.more) break;
+      }
+      return moved;
+    });
+  const some = () =>
+    run(async () => (await assignSome({ adminKey, userId: to as Id<"users">, ids: [...picked] })).moved);
+
+  const toggle = (id: Id<"recipients">) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm">
-      <p className="min-w-60 flex-1 text-amber-900">
-        <b>{count > 1000 ? "1000+" : count} links</b> were made before accounts existed. No user can see them until you assign them.
-      </p>
-      <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="Assign to user" className={inputCls}>
-        <option value="">Assign to…</option>
-        {users.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name || u.username}
-          </option>
-        ))}
-      </select>
-      <button disabled={!to || busy} onClick={go} className={primaryCls}>
-        {busy ? "Moving…" : "Assign all"}
-      </button>
-      {msg && <span className="text-amber-900">{msg}</span>}
+    <section className="space-y-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="min-w-60 flex-1 text-amber-900">
+          <b>{count > 1000 ? "1000+" : count} links</b> were made before accounts existed. No user can see them until you assign them.
+        </p>
+        <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="Assign to user" className={inputCls}>
+          <option value="">Assign to…</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name || u.username}
+            </option>
+          ))}
+        </select>
+        <button disabled={!to || busy} onClick={all} className={btnCls}>
+          Assign all
+        </button>
+        <button onClick={() => setPicking((p) => !p)} className={primaryCls}>
+          {picking ? "Hide list" : "Choose links"}
+        </button>
+      </div>
+
+      {picking && (
+        <div className="space-y-2">
+          {!list ? (
+            <p className="text-amber-900">Loading…</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => setPicked(picked.size === list.length ? new Set() : new Set(list.map((l) => l.id)))}
+                  className={btnCls}
+                >
+                  {picked.size === list.length && list.length > 0 ? "Clear" : "Select all"}
+                </button>
+                <button disabled={!to || !picked.size || busy} onClick={some} className={primaryCls}>
+                  {busy ? "Moving…" : `Assign ${picked.size} selected to ${users.find((u) => u.id === to)?.username ?? "…"}`}
+                </button>
+                {!to && <span className="text-amber-900">Pick a user first.</span>}
+              </div>
+              <ul className="max-h-80 overflow-auto rounded-xl border border-amber-200 bg-white">
+                {list.map((l) => (
+                  <li key={l.id} className="border-t border-stone-100 first:border-0">
+                    <label className="flex cursor-pointer items-center gap-3 p-2.5">
+                      <input type="checkbox" checked={picked.has(l.id)} onChange={() => toggle(l.id)} className="size-4 accent-orange-600" />
+                      <span className="font-medium">{l.name}</span>
+                      <span className="text-stone-500">
+                        {l.festival}
+                        {l.fromName ? ` · from ${l.fromName}` : ""}
+                      </span>
+                      <span className="ml-auto text-xs text-stone-500">
+                        {l.openCount} opens · {ago(l.createdAt)}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+      {msg && <p className="text-amber-900">{msg}</p>}
     </section>
   );
 }

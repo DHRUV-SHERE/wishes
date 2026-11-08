@@ -261,6 +261,51 @@ export const assignLegacy = mutation({
   },
 });
 
+// list of wishes that still have no owner (for picking who gets which)
+export const legacyList = query({
+  args: { adminKey: v.string() },
+  handler: async (ctx, { adminKey }) => {
+    assertPlatform(adminKey);
+    const links = await ctx.db
+      .query("recipients")
+      .withIndex("by_owner", (q) => q.eq("ownerId", undefined))
+      .order("desc")
+      .take(500);
+    return links.map((r) => ({
+      id: r._id,
+      name: r.name,
+      festival: r.festival,
+      fromName: r.fromName,
+      createdAt: r.createdAt,
+      openCount: r.openCount,
+      replyCount: r.replyCount,
+    }));
+  },
+});
+
+// assign only the chosen unowned wishes (and their events) to one user
+export const assignLinks = mutation({
+  args: { adminKey: v.string(), userId: v.id("users"), ids: v.array(v.id("recipients")) },
+  handler: async (ctx, { adminKey, userId, ids }) => {
+    assertPlatform(adminKey);
+    if (!(await ctx.db.get(userId))) throw new ConvexError("User not found");
+    if (ids.length > 200) throw new ConvexError("Pick at most 200 at a time");
+    let moved = 0;
+    for (const id of ids) {
+      const r = await ctx.db.get(id);
+      if (!r || r.ownerId !== undefined) continue; // never steal from another user
+      await ctx.db.patch(id, { ownerId: userId });
+      const events = await ctx.db
+        .query("events")
+        .withIndex("by_recipient", (q) => q.eq("recipientId", id))
+        .collect();
+      for (const e of events) await ctx.db.patch(e._id, { ownerId: userId });
+      moved++;
+    }
+    return { moved };
+  },
+});
+
 // ---------- Groq / AI settings ----------
 export const settings = query({
   args: { adminKey: v.string() },

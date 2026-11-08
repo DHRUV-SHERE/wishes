@@ -123,7 +123,14 @@ async function callGroq(
     const res = await fetch(`${GROQ}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages, temperature: 0.8, max_tokens: maxTokens }),
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.8,
+        // reasoning models (gpt-oss) otherwise burn the budget on thinking and return nothing
+        max_completion_tokens: maxTokens,
+        ...(/gpt-oss/i.test(model) ? { reasoning_effort: "low" } : {}),
+      }),
       signal: ctl.signal,
     });
     const latencyMs = Date.now() - t0;
@@ -132,7 +139,9 @@ async function callGroq(
       const detail = body?.error?.message ?? `HTTP ${res.status}`;
       return { ok: false, error: String(detail), status: res.status, latencyMs };
     }
-    const text: string = body?.choices?.[0]?.message?.content ?? "";
+    const text: string = String(body?.choices?.[0]?.message?.content ?? "")
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .trim();
     if (!text.trim()) return { ok: false, error: "Groq returned an empty reply", status: res.status, latencyMs };
     const u = body?.usage ?? {};
     return {
@@ -202,7 +211,7 @@ export const generate = action({
     const r = await callGroq(prep.key, prep.model, [
       { role: "system", content: system },
       { role: "user", content: userMsg },
-    ], 700);
+    ], 1500);
 
     await ctx.runMutation(internal.ai.record, {
       userId: prep.userId as Id<"users">,
@@ -235,7 +244,7 @@ export const testKey = action({
     const useModel = model?.trim() || cfg.model;
     if (!useKey) return { ok: false, message: "No Groq key to test. Paste one first." };
 
-    const r = await callGroq(useKey, useModel, [{ role: "user", content: "Reply with the single word: ok" }], 10);
+    const r = await callGroq(useKey, useModel, [{ role: "user", content: "Reply with the single word: ok" }], 300);
     await ctx.runMutation(internal.ai.record, {
       username: "(platform test)",
       kind: "test",

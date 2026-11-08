@@ -87,7 +87,7 @@ export function checkPassword(p: string) {
 }
 
 // ---------- AI settings ----------
-export const DEFAULT_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+export const DEFAULT_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
 export async function loadSettings(ctx: Pick<QueryCtx, "db">) {
   const row = await ctx.db
